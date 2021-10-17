@@ -17,8 +17,6 @@ import numpy as np
 import sys
 import glob
 
-from tensorflow.python.ops.gen_batch_ops import batch
-
 class Experiment :
     def __init__(self) :
         self.Model = None
@@ -58,6 +56,11 @@ class Experiment :
         #  inputs = [ tool_param_input, current_image_input, goal_image_input ],
         self.InputData = [param_data, white_image_array, output_images]
         self.OutputData = [output_images,param_data]
+
+    def make_data_tool_only(self) :
+        # tool params -> goal images
+        self.InputData = self.InputData[0]
+        self.OutputData = self.OutputData[0]
 
     def loss_function(y_true, y_pred) :
         #true_images, true_tool_params = y_true
@@ -142,18 +145,59 @@ class Experiment :
             loss = Experiment.loss_function
             )
 
-    def build_tool_only_model() :
+    def build_tool_only_model(self) :
+        image_size = self.ImageSize
+        num_tool_parameters = self.NumToolParams
+
+        tool_param_input = layers.Input(shape=(num_tool_parameters))
+
+        b1 = layers.Dense(16)(tool_param_input)
+        b1 = layers.Dense(16)(b1)
+        b1 = layers.Dense(32)(b1)
+        b1 = layers.Dense(32)(b1)
+
+        b2 = layers.Dense(7*7*image_size)(b1)
+        b2 = layers.Dropout(0.4)(b2)
+        b2 = layers.Reshape((7,7,image_size))(b2)
+
+        b3 = layers.Conv2DTranspose(64,kernel_size=(3,3), activation="relu")(b2)
+        b3 = layers.MaxPooling2D(pool_size=(2,2))(b3)
+        b3 = layers.Conv2DTranspose(32, kernel_size=(3,3), activation="relu")(b3)
+        b3 = layers.MaxPooling2D(pool_size=(2,2))(b3)
+        b3 = layers.Conv2DTranspose(32, kernel_size=(3,3), activation="relu")(b3)
+        b3 = layers.Conv2DTranspose(1, kernel_size=(3,3), activation="sigmoid")(b3)
+        b3 = layers.Flatten()(b3)
+        b3 = layers.Dense(image_size*image_size*3)(b3)
+        b3 = layers.Reshape((image_size,image_size,3))(b3)
+
+        # 8
+        # Dense
+        #
+        # DeconvT
+        # 128x128
+
+        self.Model = Model(
+            inputs = tool_param_input, 
+            outputs = b3 )
+        print(self.Model.summary())
+
+        tf.keras.utils.plot_model(self.Model,to_file='tool_only_model.png', show_shapes=True)
+
+        self.Model.compile(
+            optimizer = tf.keras.optimizers.Adam(learning_rate=1e-5), 
+            loss = tf.keras.losses.MeanSquaredError()
+            )
         return
 
     def train_model(self):
-        self.Model.fit(x=self.InputData, y=self.OutputData, batch_size = 8, epochs = 500)
+        self.Model.fit(x=self.InputData, y=self.OutputData, batch_size = 32, epochs = 25)
         self.Model.save("b8_e500")
         return
 
     def load_model(self) :
         self.Model = tf.keras.models.load_model("b8_e500")
 
-    def visualize_results():
+    def visualize_results(self):
         return
 
     def predict(self, data) :
@@ -166,9 +210,16 @@ if __name__ == "__main__" :
 
     exp = Experiment()
     exp.load_data()
-    exp.build_model()
+    exp.make_data_tool_only()
+    exp.build_tool_only_model()
     exp.train_model()
     exp.visualize_results()
+
+    from PIL import Image
+    testData = exp.InputData[0].reshape(1,-1)
+    val = exp.Model.predict(testData)[0]
+    img = Image.fromarray(np.uint8(255*val), 'RGB')
+    img.show()
 
 """
 val = predict(model, [input_data[0][1], input_data[1][1], input_data[2][1]])
