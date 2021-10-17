@@ -19,153 +19,159 @@ import glob
 
 from tensorflow.python.ops.gen_batch_ops import batch
 
-def load_data():
+class Experiment :
+    def __init__(self) :
+        self.Model = None
+        self.NumToolParams = 8
+        self.ImageSize = 128
+        self.InputData = None
+        self.OutputData = None
 
-    # Convert images to 0, 1 scale
-    # Convert tool parameters to 0, 1 scale (?)
+    def load_data(self):
+        # Convert images to 0, 1 scale
+        # Convert tool parameters to 0, 1 scale (?)
+        filelist = glob.glob("D:/tree/image-tools/Output_Images/*.png")
+        output_images = np.array([np.array(tf.keras.utils.load_img(fname)) for fname in filelist]).astype("float")
+        output_images *= 1.0/255.
 
-    filelist = glob.glob("D:/tree/image-tools/Output_Images/*.png")
-    output_images = np.array([np.array(tf.keras.utils.load_img(fname)) for fname in filelist]).astype("float")
-    output_images *= 1.0/255.
+        # Load white image
+        white_image_array = np.ones(output_images.shape)
 
-    # Load white image
-    white_image_array = np.ones(output_images.shape)
+        # Data is (index, r, g, b, width, x_start, y_start, x_end, y_end)
+        param_data = np.loadtxt("D:/tree/image-tools/Image_Parameters/params.txt")
 
-    # Data is (index, r, g, b, width, x_start, y_start, x_end, y_end)
-    param_data = np.loadtxt("D:/tree/image-tools/Image_Parameters/params.txt")
+        # Remove index column
+        param_data = param_data[:,1:]
 
-    # Remove index column
-    param_data = param_data[:,1:]
+        # Normalize data
+        maxColorChannel = 255
+        maxCoordinate = 128
+        minPenWidth = 1
+        maxPenWidth = 20
 
-    # Normalize data
-    maxColorChannel = 255
-    maxCoordinate = 128
-    minPenWidth = 1
-    maxPenWidth = 20
+        param_data[:,:3] /= maxColorChannel
+        param_data[:,3] -= minPenWidth
+        param_data[:,3] /= maxPenWidth
+        param_data[:,4:] /= maxCoordinate
 
-    param_data[:,:3] /= maxColorChannel
-    param_data[:,3] -= minPenWidth
-    param_data[:,3] /= maxPenWidth
-    param_data[:,4:] /= maxCoordinate
+        # Return [input, output]
+        #  inputs = [ tool_param_input, current_image_input, goal_image_input ],
+        self.InputData = [param_data, white_image_array, output_images]
+        self.OutputData = [output_images,param_data]
 
-    # Return [input, output]
-    #  inputs = [ tool_param_input, current_image_input, goal_image_input ],
-    return [[param_data, white_image_array, output_images],[output_images,param_data]]
+    def loss_function(y_true, y_pred) :
+        #true_images, true_tool_params = y_true
+        #predicted_images, predicted_tool_params = y_pred
+        loss_object = tf.keras.losses.MeanSquaredError()
+        return loss_object(y_true[0], y_pred[0]) + loss_object(y_true[1], y_pred[1])
 
-def loss_function(y_true, y_pred) :
-    #true_images, true_tool_params = y_true
-    #predicted_images, predicted_tool_params = y_pred
-    loss_object = tf.keras.losses.MeanSquaredError()
-    return loss_object(y_true[0], y_pred[0]) + loss_object(y_true[1], y_pred[1])
+    def build_model(self):
+        image_size = self.ImageSize
+        num_tool_parameters = self.NumToolParams
 
-def build_model():
-    image_size = 128
-    num_tool_parameters = 8
+        # Inputs  : Goal image is A, Tool Params are B, and Current Image is C
+        # Outputs : (B,A) -> C, (A,C) -> B
+        # (Tool Params + Current Image) -> (Goal Image)
+        # (Current Image + Goal Image) -> (Tool Params)
+        current_image_input = layers.Input(shape=(image_size, image_size, 3))
+        tool_param_input = layers.Input(shape=(num_tool_parameters))
+        goal_image_input = layers.Input(shape=(image_size, image_size, 3))
 
-    # Inputs  : Goal image is A, Tool Params are B, and Current Image is C
-    # Outputs : (B,A) -> C, (A,C) -> B
-    # (Tool Params + Current Image) -> (Goal Image)
-    # (Current Image + Goal Image) -> (Tool Params)
-    current_image_input = layers.Input(shape=(image_size, image_size, 3))
-    tool_param_input = layers.Input(shape=(num_tool_parameters))
-    goal_image_input = layers.Input(shape=(image_size, image_size, 3))
+        a1_head = layers.Conv2D(32, kernel_size=(3, 3), activation = "relu")
+        a11 = layers.Conv2D(32, kernel_size=(3, 3), activation="relu")
+        a12 = layers.MaxPooling2D(pool_size=(2, 2))
+        a13 = layers.Conv2D(64, kernel_size=(3, 3), activation="relu")
+        a14 = layers.MaxPooling2D(pool_size=(2, 2))
+        a15 = layers.Flatten()
 
-    a1_head = layers.Conv2D(32, kernel_size=(3, 3), activation = "relu")
-    a11 = layers.Conv2D(32, kernel_size=(3, 3), activation="relu")
-    a12 = layers.MaxPooling2D(pool_size=(2, 2))
-    a13 = layers.Conv2D(64, kernel_size=(3, 3), activation="relu")
-    a14 = layers.MaxPooling2D(pool_size=(2, 2))
-    a15 = layers.Flatten()
+        a1 = a1_head(current_image_input)
+        a1 = a11(a1)
+        a1 = a12(a1)
+        a1 = a13(a1)
+        a1 = a14(a1)
+        a1 = a15(a1)
 
-    a1 = a1_head(current_image_input)
-    a1 = a11(a1)
-    a1 = a12(a1)
-    a1 = a13(a1)
-    a1 = a14(a1)
-    a1 = a15(a1)
+        a2 = layers.Dense(128)(a1)
+        a2 = layers.Dense(128)(a2)
+        a2 = layers.Dense(128)(a2)
 
-    a2 = layers.Dense(128)(a1)
-    a2 = layers.Dense(128)(a2)
-    a2 = layers.Dense(128)(a2)
+        b1 = layers.Dense(16)(tool_param_input)
+        b1 = layers.Dense(16)(b1)
+        b1 = layers.Dense(16)(b1)
+        b1 = layers.Dense(16)(b1)
 
-    b1 = layers.Dense(16)(tool_param_input)
-    b1 = layers.Dense(16)(b1)
-    b1 = layers.Dense(16)(b1)
-    b1 = layers.Dense(16)(b1)
+        b2 = layers.Dense(32)(layers.concatenate(inputs = [b1, a2]))
+        b2 = layers.Dense(7*7*128)(b2)
+        b2 = layers.Reshape((7,7,128))(b2)
 
-    b2 = layers.Dense(32)(layers.concatenate(inputs = [b1, a2]))
-    b2 = layers.Dense(7*7*128)(b2)
-    b2 = layers.Reshape((7,7,128))(b2)
+        b3 = layers.Conv2DTranspose(64,kernel_size=(3,3), activation="relu")(b2)
+        b3 = layers.MaxPooling2D(pool_size=(2,2))(b3)
+        b3 = layers.Conv2DTranspose(32, kernel_size=(3,3), activation="relu")(b3)
+        b3 = layers.MaxPooling2D(pool_size=(2,2))(b3)
+        b3 = layers.Conv2DTranspose(32, kernel_size=(3,3), activation="relu")(b3)
+        b3 = layers.Conv2DTranspose(1, kernel_size=(3,3), activation="sigmoid")(b3)
+        b3 = layers.Flatten()(b3)
+        b3 = layers.Dense(128*128*3)(b3)
+        b3 = layers.Reshape((128,128,3))(b3)
 
-    b3 = layers.Conv2DTranspose(64,kernel_size=(3,3), activation="relu")(b2)
-    b3 = layers.MaxPooling2D(pool_size=(2,2))(b3)
-    b3 = layers.Conv2DTranspose(32, kernel_size=(3,3), activation="relu")(b3)
-    b3 = layers.MaxPooling2D(pool_size=(2,2))(b3)
-    b3 = layers.Conv2DTranspose(32, kernel_size=(3,3), activation="relu")(b3)
-    b3 = layers.Conv2DTranspose(1, kernel_size=(3,3), activation="sigmoid")(b3)
-    b3 = layers.Flatten()(b3)
-    b3 = layers.Dense(128*128*3)(b3)
-    b3 = layers.Reshape((128,128,3))(b3)
+        # Copy of a1 but taking c0 as input
+        c1 = a1_head(goal_image_input)
+        c1 = a11(c1)
+        c1 = a12(c1)
+        c1 = a13(c1)
+        c1 = a14(c1)
+        c1 = a15(c1)
 
-    # Copy of a1 but taking c0 as input
-    c1 = a1_head(goal_image_input)
-    c1 = a11(c1)
-    c1 = a12(c1)
-    c1 = a13(c1)
-    c1 = a14(c1)
-    c1 = a15(c1)
+        c2 = layers.Dense(32)(layers.concatenate(inputs = [a2, c1]))
+        c2 = layers.Dense(32)(c2)
 
-    c2 = layers.Dense(32)(layers.concatenate(inputs = [a2, c1]))
-    c2 = layers.Dense(32)(c2)
+        c3 = layers.Dense(16)(c2)
+        c3 = layers.Dense(16)(c3)
+        c3 = layers.Dense(16)(c3)
+        c3 = layers.Dense(num_tool_parameters)(c3)
 
-    c3 = layers.Dense(16)(c2)
-    c3 = layers.Dense(16)(c3)
-    c3 = layers.Dense(16)(c3)
-    c3 = layers.Dense(num_tool_parameters)(c3)
+        self.Model = Model(
+            inputs = [ tool_param_input, current_image_input, goal_image_input ], 
+            outputs = [ b3, c3 ])
+        print(self.Model.summary())
 
-    model = Model(
-        inputs = [ tool_param_input, current_image_input, goal_image_input ], 
-        outputs = [ b3, c3 ])
-    print(model.summary())
+        tf.keras.utils.plot_model(self.Model,to_file='model.png', show_shapes=True)
 
-    tf.keras.utils.plot_model(model,to_file='model.png', show_shapes=True)
+        self.Model.compile(
+            optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3), 
+            loss = Experiment.loss_function
+            )
 
-    model.compile(
-        optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3), 
-        loss = loss_function
-        )
+    def build_tool_only_model() :
+        return
 
-    return model
+    def train_model(self):
+        self.Model.fit(x=self.InputData, y=self.OutputData, batch_size = 8, epochs = 500)
+        self.Model.save("b8_e500")
+        return
 
-def train_model(model, input_data, output_data):
-    model.fit(x=input_data, y=output_data, batch_size = 8, epochs = 500)
-    # Save weights
-    model.save("b8_e500")
-    return
+    def load_model(self) :
+        self.Model = tf.keras.models.load_model("b8_e500")
 
-def load_model() :
-    return tf.keras.models.load_model("b8_e500")
+    def visualize_results():
+        return
 
-def visualize_results():
-    return
+    def predict(self, data) :
+        data[0] = data[0].reshape(1,8)
+        data[1] = data[1].reshape(1,128,128,3)
+        data[2] = data[2].reshape(1,128,128,3)
+        return self.Model.predict(data)
 
 if __name__ == "__main__" : 
 
-    input_data, output_data = load_data()
-    model = build_model()
+    exp = Experiment()
+    exp.load_data()
+    exp.build_model()
+    exp.train_model()
+    exp.visualize_results()
 
-    batch_size = 2
-    whiteImage = np.ones([batch_size,128,128,3])
-    randomToolParams = np.random.rand(batch_size, 8)
-
-    mockData = [randomToolParams, whiteImage, whiteImage]
-
-    # Returned is [goalImage, toolParams]
-    # where the first dimension of both goalImage and toolParams
-    # is the batch dimension.
-    # example : goalImage[0] is the first predicted image
-    val = model.predict(mockData)
-
-    train_model(model, input_data, output_data)
-    visualize_results()
-    
+"""
+val = predict(model, [input_data[0][1], input_data[1][1], input_data[2][1]])
+temp = Image.fromarray(np.uint8(255*val[0][0]),'RGB')
+temp.show()
+"""
