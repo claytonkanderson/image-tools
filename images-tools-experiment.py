@@ -16,6 +16,8 @@ from tensorflow.keras.models import Model
 import numpy as np
 import sys
 import glob
+import time
+import matplotlib.pyplot as plt
 
 class Experiment :
     def __init__(self) :
@@ -154,31 +156,26 @@ class Experiment :
         b1 = layers.Dense(16)(tool_param_input)
         b1 = layers.Dense(16)(b1)
         b1 = layers.Dense(32)(b1)
-        b1 = layers.Dense(32)(b1)
+        b1 = layers.Dense(64)(b1)
+        b1 = layers.Dense(16*16*64)(b1)
+        b1 = layers.Dropout(0.2)(b1)
+        
+        b1 = layers.Reshape((16,16,64))(b1)
+        
+        b2 = layers.Conv2DTranspose(64, kernel_size=(2,2), strides=(2,2), activation='relu')(b1)
+        b2 = layers.Conv2DTranspose(32, kernel_size=(2,2), strides=(2,2), activation='relu')(b2)
+        b2 = layers.Conv2DTranspose(16, kernel_size=(2,2), strides=(2,2), activation='relu')(b2)
+        #b2 = layers.Conv2DTranspose(8, kernel_size=(2,2), strides=(1,1), activation='relu')(b2)
+        b2 = layers.Conv2DTranspose(3, kernel_size=(2,2), strides=(1,1), activation='sigmoid')(b2)
+        b2 = layers.AveragePooling2D(pool_size=(2,2), strides=(1,1))(b2)
 
-        b2 = layers.Dense(7*7*image_size)(b1)
-        b2 = layers.Dropout(0.4)(b2)
-        b2 = layers.Reshape((7,7,image_size))(b2)
+        #b2 = layers.Conv2DTranspose(3, kernel_size=(2,2), strides=(2,2), activation='sigmoid')(b2)
 
-        b3 = layers.Conv2DTranspose(64,kernel_size=(3,3), activation="relu")(b2)
-        b3 = layers.MaxPooling2D(pool_size=(2,2))(b3)
-        b3 = layers.Conv2DTranspose(32, kernel_size=(3,3), activation="relu")(b3)
-        b3 = layers.MaxPooling2D(pool_size=(2,2))(b3)
-        b3 = layers.Conv2DTranspose(32, kernel_size=(3,3), activation="relu")(b3)
-        b3 = layers.Conv2DTranspose(1, kernel_size=(3,3), activation="sigmoid")(b3)
-        b3 = layers.Flatten()(b3)
-        b3 = layers.Dense(image_size*image_size*3)(b3)
-        b3 = layers.Reshape((image_size,image_size,3))(b3)
-
-        # 8
-        # Dense
-        #
-        # DeconvT
-        # 128x128
+        #b3 = layers.Reshape((image_size,image_size,3))(b2)
 
         self.Model = Model(
             inputs = tool_param_input, 
-            outputs = b3 )
+            outputs = b2 )
         print(self.Model.summary())
 
         tf.keras.utils.plot_model(self.Model,to_file='tool_only_model.png', show_shapes=True)
@@ -190,7 +187,7 @@ class Experiment :
         return
 
     def train_model(self):
-        self.Model.fit(x=self.InputData, y=self.OutputData, batch_size = 32, epochs = 25)
+        self.Model.fit(x=self.InputData, y=self.OutputData, batch_size = 32, epochs = 4)
         self.Model.save("b8_e500")
         return
 
@@ -198,6 +195,13 @@ class Experiment :
         self.Model = tf.keras.models.load_model("b8_e500")
 
     def visualize_results(self):
+        figures = []
+        for i in range(5) :
+            testData = self.InputData[i].reshape(1,-1)
+            val = self.Model.predict(testData)[0]
+            figures.append(plt.figure())
+            plt.imshow(val)
+        plt.show()
         return
 
     def predict(self, data) :
@@ -208,18 +212,18 @@ class Experiment :
 
 if __name__ == "__main__" : 
 
+    start = time.time()
+
     exp = Experiment()
     exp.load_data()
     exp.make_data_tool_only()
     exp.build_tool_only_model()
     exp.train_model()
-    exp.visualize_results()
 
-    from PIL import Image
-    testData = exp.InputData[0].reshape(1,-1)
-    val = exp.Model.predict(testData)[0]
-    img = Image.fromarray(np.uint8(255*val), 'RGB')
-    img.show()
+    end = time.time()
+    print("Finished after {0} seconds.".format(end-start))
+
+    exp.visualize_results()
 
 """
 val = predict(model, [input_data[0][1], input_data[1][1], input_data[2][1]])
